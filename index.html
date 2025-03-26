@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFSe Campinas - Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>NFSe Campinas - Demo</h1>
+        <div class="form-group">
+            <label for="host">Host:</label>
+            <input type="text" id="host" value="https://nfse.campinas.sp.gov.br/webservice/nfse.wsdl">
+        </div>
+        <div class="form-group">
+            <label for="certificate">Certificado (Base64):</label>
+            <textarea id="certificate" rows="5"></textarea>
+        </div>
+        <div class="form-group">
+            <label for="certPassword">Senha do Certificado:</label>
+            <input type="password" id="certPassword">
+        </div>
+        <button onclick="consultarNfse()">Consultar NFSe</button>
+        <div id="result"></div>
+    </div>
+
+    <script type="module">
+        import { NfseCampinas } from './dist/index.js';
+
+        window.consultarNfse = async function() {
+            try {
+                const host = document.getElementById('host').value;
+                const certificateBase64 = document.getElementById('certificate').value;
+                const certPassword = document.getElementById('certPassword').value;
+
+                // Converter o certificado de Base64 para Buffer
+                const certificate = Uint8Array.from(atob(certificateBase64), c => c.charCodeAt(0));
+
+                const nfse = new NfseCampinas(host, certificate, certPassword, true);
+
+                // Exemplo de consulta de NFSe
+                const result = await nfse.ConsultarNfsePorRps({
+                    ConsultarNfseRpsEnvio: {
+                        IdentificacaoRps: {
+                            Numero: "1",
+                            Serie: "1",
+                            Tipo: 1
+                        },
+                        Prestador: {
+                            CpfCnpj: "12345678901",
+                            InscricaoMunicipal: "123456"
+                        }
+                    }
+                });
+
+                document.getElementById('result').textContent = JSON.stringify(result, null, 2);
+            } catch (error) {
+                document.getElementById('result').textContent = `Erro: ${error.message}`;
+            }
+        };
+    </script>
+</body>
+</html> 

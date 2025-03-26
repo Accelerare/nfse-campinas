@@ -1,13 +1,16 @@
-import fs from 'fs';
-import { createClientAsync, NfseCampinas } from '../../../src';
+import { Pkcs12ReadResult } from 'pem';
 import { SignedXml } from 'xml-crypto';
-import pem, { Pkcs12ReadResult } from 'pem';
+import { createClientAsync, NfseCampinas } from '../../../src';
+import { readPkcs12FromBrowser } from '../../../src/utils/browser-utils';
 
 // Mock das dependências
 jest.mock('fs');
 jest.mock('pem');
 jest.mock('../../../src/soap/notafiscalsoap');
 jest.mock('xml-crypto');
+jest.mock('../../../src/utils/browser-utils', () => ({
+  readPkcs12FromBrowser: jest.fn(),
+}));
 
 describe('NfseCampinas', () => {
   const mockCertificate = Buffer.from('mocked-certificate');
@@ -34,14 +37,11 @@ describe('NfseCampinas', () => {
 
   test('deve ler e converter o certificado PFX ao chamar getPemCert', async () => {
     const mockCertResult = { key: 'mocked-key', cert: 'mocked-cert' };
-    const mockPfx = Buffer.from('mocked-pfx');
-    (fs.readFileSync as jest.Mock).mockReturnValue(mockPfx);
-    (pem.readPkcs12 as jest.Mock).mockImplementation((_, __, callback) => {
-      callback(null, mockCertResult);
-    });
+    (readPkcs12FromBrowser as jest.Mock).mockResolvedValue(mockCertResult);
 
     const pemCert = await instance['getPemCert']();
     expect(pemCert).toBe(mockCertResult);
+    expect(readPkcs12FromBrowser).toHaveBeenCalledWith(mockCertificate, mockCertPassword);
   });
 
   test('deve assinar XML corretamente ao chamar getSignedXml', () => {
@@ -112,7 +112,7 @@ describe('NfseCampinas', () => {
 
       // Assert
       expect(result).toBeInstanceOf(Buffer);
-      expect(result.toString('hex')).toBe(Buffer.from(mockPdfContent).toString('hex'));
+      expect(Buffer.from(result).toString('hex')).toBe(Buffer.from(mockPdfContent).toString('hex'));
       expect(global.fetch).toHaveBeenCalledTimes(1);
 
       const [calledUrl, calledOptions] = (global.fetch as jest.Mock).mock.calls[0];

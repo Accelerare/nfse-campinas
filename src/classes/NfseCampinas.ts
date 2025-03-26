@@ -1,23 +1,23 @@
-import pem from 'pem';
-import { SignedXml } from 'xml-crypto';
-import {
-  createClientAsync,
-  NotaFiscalSoapClient,
-  TnsCancelarNfse,
-  TnsConsultarLoteRps,
-  TnsConsultarNfseFaixa,
-  TnsConsultarNfsePorRps,
-  TnsConsultarNfseServicoPrestado,
-  TnsConsultarNfseServicoTomado,
-  TnsGerarNfse,
-  TnsRecepcionarLoteRps,
-  TnsRecepcionarLoteRpsSincrono,
-  TnsSubstituirNfse,
-} from '../soap/notafiscalsoap';
-import { ImprimirNfseRequest, ReferenceOptions } from '../types/nfseCampinas';
-import { ComputeSignatureOptions } from 'xml-crypto/lib/types';
 import { XMLParser } from 'fast-xml-parser';
+import { SignedXml } from 'xml-crypto';
+import { ComputeSignatureOptions } from 'xml-crypto/lib/types';
 import xmlbuilder from 'xmlbuilder';
+import {
+    createClientAsync,
+    NotaFiscalSoapClient,
+    TnsCancelarNfse,
+    TnsConsultarLoteRps,
+    TnsConsultarNfseFaixa,
+    TnsConsultarNfsePorRps,
+    TnsConsultarNfseServicoPrestado,
+    TnsConsultarNfseServicoTomado,
+    TnsGerarNfse,
+    TnsRecepcionarLoteRps,
+    TnsRecepcionarLoteRpsSincrono,
+    TnsSubstituirNfse,
+} from '../soap/notafiscalsoap';
+import { ReferenceOptions } from '../types/nfseCampinas';
+import { Pkcs12Result, readPkcs12FromBrowser } from '../utils/browser-utils';
 
 export class NfseCampinas {
   readonly defaultOptions: ReferenceOptions = {
@@ -28,14 +28,23 @@ export class NfseCampinas {
     ],
     uri: 'rps@1',
   };
-  private soapClient: NotaFiscalSoapClient;
+  private soapClient: NotaFiscalSoapClient | null = null;
+  private readonly host: string;
+  private readonly certificate: Buffer | Uint8Array;
+  private readonly certificatePassword: string;
+  private readonly debug: boolean;
 
   constructor(
-    protected host: string,
-    protected certificate: Buffer,
-    protected certPassword: string,
-    protected debug: boolean = false,
-  ) {}
+    host: string,
+    certificate: Buffer | Uint8Array,
+    certificatePassword: string,
+    debug = false,
+  ) {
+    this.host = host;
+    this.certificate = certificate;
+    this.certificatePassword = certificatePassword;
+    this.debug = debug;
+  }
 
   public async ConsultarNfsePorRps(input: TnsConsultarNfsePorRps) {
     const [client, pemCert] = await Promise.all([this.getSoapClient(), this.getPemCert()]);
@@ -314,38 +323,34 @@ export class NfseCampinas {
     }
   }
 
-  public async ImprimirNfse(param: ImprimirNfseRequest): Promise<Buffer> {
+  public async ImprimirNfse(params: {
+    cnpj: string;
+    inscricaoMunicipal: string;
+    numeroNfse: string;
+    codigoVerificacao: string;
+  }): Promise<Buffer> {
     try {
-      // Constrói a URL com os parâmetros
-      const url = new URL(
-        `/notafiscal-ws/servico/notafiscal/autenticacao/cpfCnpj/${param.cnpj}/inscricaoMunicipal/${param.inscricaoMunicipal}/numeroNota/${param.numeroNfse}/codigoVerificacao/${param.codigoVerificacao}`,
-        this.host,
-      );
+      const url = new URL(`${this.host}/servico/notafiscal/autenticacao/cpfCnpj/${params.cnpj}/inscricaoMunicipal/${params.inscricaoMunicipal}/numeroNota/${params.numeroNfse}/codigoVerificacao/${params.codigoVerificacao}`);
 
-      // Faz a requisição GET
-      const response = await fetch(url, {
+      const response = await fetch(url.toString(), {
         method: 'GET',
         headers: {
-          Accept: 'application/pdf',
+          'Accept': 'application/pdf',
         },
       });
 
-      // Verifica se a resposta foi bem sucedida
       if (!response.ok) {
         throw new Error(`Erro ao buscar NFSe: ${response.status} - ${response.statusText}`);
       }
 
-      // Verifica se o content-type está correto
       const contentType = response.headers.get('content-type');
       if (!contentType?.includes('application/pdf')) {
         throw new Error(`Tipo de conteúdo inválido: ${contentType}`);
       }
 
-      // Converte a resposta para Buffer
       const arrayBuffer = await response.arrayBuffer();
       return Buffer.from(arrayBuffer);
     } catch (error) {
-      // Re-lança o erro com uma mensagem mais descritiva
       throw new Error(`Falha ao imprimir NFSe: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
     }
   }
@@ -354,7 +359,7 @@ export class NfseCampinas {
     xml: string,
     computeOptions: ComputeSignatureOptions,
     referenceOptions: ReferenceOptions,
-    pemCert: pem.Pkcs12ReadResult,
+    pemCert: Pkcs12Result,
   ) {
     const sig = new SignedXml({
       privateKey: pemCert.key,
@@ -412,13 +417,8 @@ export class NfseCampinas {
     }
   }
 
-  private async getPemCert(): Promise<pem.Pkcs12ReadResult> {
-    return await new Promise((resolve, reject) => {
-      pem.readPkcs12(this.certificate, { p12Password: this.certPassword }, (err, cert) => {
-        if (err) reject(err);
-        else resolve(cert);
-      });
-    });
+  private async getPemCert(): Promise<Pkcs12Result> {
+    return await readPkcs12FromBrowser(this.certificate, this.certificatePassword);
   }
 
   private async getSoapClient() {
