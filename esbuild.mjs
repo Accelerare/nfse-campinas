@@ -1,21 +1,23 @@
-import { build } from 'esbuild';
-import glob from 'glob';
+import * as esbuild from 'esbuild';
 
-build({
-  entryPoints: glob.sync('./src/**/*.ts'),
+await esbuild.build({
+  entryPoints: ['src/index.ts'],
   bundle: true,
-  minify: true,
+  outfile: 'dist/index.js',
+  format: 'esm',
   platform: 'browser',
   target: ['es2020'],
-  outdir: './dist',
-  plugins: [],
+  external: ['node-forge', 'soap', 'xml-crypto', 'fast-xml-parser', 'xmlbuilder'],
   define: {
-    'process.env.NODE_ENV': '"production"'
+    'process.env.NODE_DEBUG': 'false',
   },
-  format: 'esm',
-}).then(result => {
-  console.log(result);
-}).catch((err) => {
-  console.log(err);
-  process.exit(1);
+  inject: ['./src/polyfills.ts'],
+  loader: {
+    '.ts': 'ts',
+  },
+  resolveExtensions: ['.ts', '.js'],
+  sourcemap: true,
+  minify: true,
+  treeShaking: true,
+  legalComments: 'none',
 });
