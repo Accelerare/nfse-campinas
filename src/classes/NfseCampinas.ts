@@ -426,6 +426,7 @@ export class NfseCampinas {
 
         // Cria um XML apenas com o InfDeclaracaoPrestacaoServico atual
         const infDeclaracao = rps.InfDeclaracaoPrestacaoServico;
+        infDeclaracao['@Id'] = `_${index}`;
         const rpsXml = xmlbuilder.create({ InfDeclaracaoPrestacaoServico: infDeclaracao }).end({ pretty: false });
         rpsSig.computeSignature(rpsXml);
         const signedRps = rpsSig.getSignedXml();

@@ -257,9 +257,11 @@ describe('NfseCampinas - Assinatura de Múltiplos RPS', () => {
     // Verifica se cada RPS tem sua própria assinatura usando regex
     const rpsMatches = signedXml.match(/<Rps>[\s\S]*?<\/Rps>/g) || [];
     const signatureMatches = signedXml.match(/<Signature[\s\S]*?<\/Signature>/g) || [];
+    const idMatches = signedXml.match(/Id="_[0-9]"/g) || [];
     
     expect(rpsMatches.length).toBe(2);
     expect(signatureMatches.length).toBe(2);
+    expect(idMatches.length).toBe(2);
 
     // Verifica se cada RPS tem uma assinatura com a referência correta
     rpsSigningInstances.forEach((instance, index) => {
