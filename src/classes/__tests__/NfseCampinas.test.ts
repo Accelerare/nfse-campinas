@@ -1,3 +1,4 @@
+import { XMLParser } from 'fast-xml-parser';
 import { NfseCampinas } from '../NfseCampinas';
 
 describe('NfseCampinas - Assinatura de Múltiplos RPS', () => {
@@ -12,43 +13,59 @@ describe('NfseCampinas - Assinatura de Múltiplos RPS', () => {
     mockSignedXmlInstances = [];
 
     // Mock da classe SignedXml
-    jest.spyOn(require('xml-crypto'), 'SignedXml').mockImplementation((keyProvider) => {
-      const instance = {
-        computeSignature: jest.fn().mockImplementation((xml) => {
-          instance.xmlToSign = xml;
-        }),
-        getSignedXml: jest.fn().mockImplementation(function() {
-          if (this.xmlToSign.includes('InfDeclaracaoPrestacaoServico')) {
-            const match = this.xmlToSign.match(/Id="_(\d+)"/);
-            const id = match ? match[1] : '0';
-            return this.xmlToSign.replace(
-              '</InfDeclaracaoPrestacaoServico>',
-              `</InfDeclaracaoPrestacaoServico><Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
-                <SignedInfo>
-                  <Reference URI="#_${id}"/>
-                </SignedInfo>
-                <SignatureValue>MOCK_SIGNATURE_VALUE</SignatureValue>
-              </Signature>`
-            );
-          }
-          return this.xmlToSign;
-        }),
-        addReference: jest.fn().mockImplementation((options) => {
-          const match = options.xpath.match(/Id='_(\d+)'/);
-          if (match) {
-            instance.referenceUri = '#_' + match[1];
-          }
-        }),
-        keyInfoProvider: keyProvider,
-        canonicalizationAlgorithm: 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315',
-        signatureAlgorithm: 'http://www.w3.org/2000/09/xmldsig#rsa-sha1',
-        xmlToSign: '',
-        referenceUri: '',
+    const mockSignedXml = function(this: any, keyProvider: any) {
+      this.keyInfoProvider = keyProvider;
+      this.canonicalizationAlgorithm = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
+      this.signatureAlgorithm = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
+      this.xmlToSign = '';
+      this.referenceUri = '';
+
+      this.computeSignature = function(xml: string) {
+        this.xmlToSign = xml;
       };
 
-      mockSignedXmlInstances.push(instance);
-      return instance;
-    });
+      this.getSignedXml = function() {
+        if (this.xmlToSign.includes('InfDeclaracaoPrestacaoServico')) {
+          const match = this.xmlToSign.match(/Id="_(\d+)"/);
+          const id = match ? match[1] : '0';
+          return this.xmlToSign.replace(
+            '</InfDeclaracaoPrestacaoServico>',
+            `<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+              <SignedInfo>
+                <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+                <SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/>
+                <Reference URI="#_${id}">
+                  <Transforms>
+                    <Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+                    <Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+                  </Transforms>
+                  <DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/>
+                  <DigestValue>MOCK_DIGEST_VALUE</DigestValue>
+                </Reference>
+              </SignedInfo>
+              <SignatureValue>MOCK_SIGNATURE_VALUE</SignatureValue>
+              <KeyInfo>
+                <X509Data>
+                  <X509Certificate>MOCK_CERTIFICATE</X509Certificate>
+                </X509Data>
+              </KeyInfo>
+            </Signature></InfDeclaracaoPrestacaoServico>`
+          );
+        }
+        return this.xmlToSign;
+      };
+
+      this.addReference = function(options: any) {
+        const match = options.xpath.match(/Id='_(\d+)'/);
+        if (match) {
+          this.referenceUri = '#_' + match[1];
+        }
+      };
+
+      mockSignedXmlInstances.push(this);
+    };
+
+    jest.spyOn(require('xml-crypto'), 'SignedXml').mockImplementation(mockSignedXml);
   });
 
   afterEach(() => {
@@ -56,203 +73,34 @@ describe('NfseCampinas - Assinatura de Múltiplos RPS', () => {
   });
 
   it('deve assinar corretamente um lote com múltiplos RPS', async () => {
-    // Mock do certificado
     const mockPemCert = {
-      key: 'mock-private-key',
-      cert: 'mock-certificate',
+      key: 'mock-key',
+      cert: 'mock-cert',
       ca: ['mock-ca-certificate']
     };
 
-    // Mock do método getPemCert
-    jest.spyOn(nfse as any, 'getPemCert').mockResolvedValue(mockPemCert);
-
-    // XML de exemplo com 2 RPS
-    const xmlInput = `<?xml version="1.0"?>
-    <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-      <soap:Body>
-        <tns:RecepcionarLoteRpsSincrono>
-          <EnviarLoteRpsSincronoEnvio>
-            <LoteRps>
-              <CpfCnpj>
-                <Cnpj>19002553000101</Cnpj>
-              </CpfCnpj>
-              <InscricaoMunicipal>003782824</InscricaoMunicipal>
-              <NumeroLote>25032422</NumeroLote>
-              <ListaRps>
-                <Rps>
-                  <InfDeclaracaoPrestacaoServico Id="_0">
-                    <Competencia>2025-03-24</Competencia>
-                    <Prestador>
-                      <CpfCnpj>
-                        <Cnpj>19002553000101</Cnpj>
-                      </CpfCnpj>
-                      <InscricaoMunicipal>003782824</InscricaoMunicipal>
-                    </Prestador>
-                    <Servico>
-                      <CodigoCnae>620310002</CodigoCnae>
-                      <Discriminacao>teste 1</Discriminacao>
-                      <Valores>
-                        <ValorServicos>0</ValorServicos>
-                        <ValorPis>0</ValorPis>
-                        <ValorCofins>0</ValorCofins>
-                        <ValorIr>0</ValorIr>
-                        <ValorInss>0</ValorInss>
-                        <ValorLiquidoNfse>0</ValorLiquidoNfse>
-                        <OutrasRetencoes>0</OutrasRetencoes>
-                        <DescontoIncondicionado>0</DescontoIncondicionado>
-                        <Aliquota>2</Aliquota>
-                        <ValorCsll>0</ValorCsll>
-                        <BaseCalculo>0</BaseCalculo>
-                        <IssRetido>0</IssRetido>
-                        <ValorDeducoes>0</ValorDeducoes>
-                        <ValorIss>0</ValorIss>
-                        <DescontoCondicionado>0</DescontoCondicionado>
-                      </Valores>
-                      <IssRetido>0</IssRetido>
-                      <ItemListaServico>01.05</ItemListaServico>
-                      <CodigoMunicipio>3509502</CodigoMunicipio>
-                      <ExigibilidadeISS>1</ExigibilidadeISS>
-                      <MunicipioIncidencia>3509502</MunicipioIncidencia>
-                    </Servico>
-                    <Rps>
-                      <Status>1</Status>
-                      <DataEmissao>2025-03-24</DataEmissao>
-                      <IdentificacaoRps>
-                        <Numero>25032422</Numero>
-                        <Tipo>1</Tipo>
-                        <Serie>NF</Serie>
-                      </IdentificacaoRps>
-                    </Rps>
-                    <Tomador>
-                      <RazaoSocial>VECTOR SAUDE LTDA</RazaoSocial>
-                      <Contato>
-                        <Email>hmcheu@gmail.com</Email>
-                      </Contato>
-                      <IdentificacaoTomador>
-                        <CpfCnpj>
-                          <Cnpj>06227199001062</Cnpj>
-                        </CpfCnpj>
-                      </IdentificacaoTomador>
-                      <Endereco>
-                        <Numero>205</Numero>
-                        <Uf>SP</Uf>
-                        <CodigoMunicipio>3550308</CodigoMunicipio>
-                        <Complemento/>
-                        <Bairro/>
-                        <Endereco>RUA ALBERTO DE SALVO</Endereco>
-                        <Cep>13084759</Cep>
-                      </Endereco>
-                    </Tomador>
-                    <OptanteSimplesNacional>2</OptanteSimplesNacional>
-                    <IncentivoFiscal>2</IncentivoFiscal>
-                  </InfDeclaracaoPrestacaoServico>
-                </Rps>
-                <Rps>
-                  <InfDeclaracaoPrestacaoServico Id="_1">
-                    <Competencia>2025-03-24</Competencia>
-                    <Prestador>
-                      <CpfCnpj>
-                        <Cnpj>19002553000101</Cnpj>
-                      </CpfCnpj>
-                      <InscricaoMunicipal>003782824</InscricaoMunicipal>
-                    </Prestador>
-                    <Servico>
-                      <CodigoCnae>620310002</CodigoCnae>
-                      <Discriminacao>teste 2</Discriminacao>
-                      <Valores>
-                        <ValorServicos>0</ValorServicos>
-                        <ValorPis>0</ValorPis>
-                        <ValorCofins>0</ValorCofins>
-                        <ValorIr>0</ValorIr>
-                        <ValorInss>0</ValorInss>
-                        <ValorLiquidoNfse>0</ValorLiquidoNfse>
-                        <OutrasRetencoes>0</OutrasRetencoes>
-                        <DescontoIncondicionado>0</DescontoIncondicionado>
-                        <Aliquota>2</Aliquota>
-                        <ValorCsll>0</ValorCsll>
-                        <BaseCalculo>0</BaseCalculo>
-                        <IssRetido>0</IssRetido>
-                        <ValorDeducoes>0</ValorDeducoes>
-                        <ValorIss>0</ValorIss>
-                        <DescontoCondicionado>0</DescontoCondicionado>
-                      </Valores>
-                      <IssRetido>0</IssRetido>
-                      <ItemListaServico>01.05</ItemListaServico>
-                      <CodigoMunicipio>3509502</CodigoMunicipio>
-                      <ExigibilidadeISS>1</ExigibilidadeISS>
-                      <MunicipioIncidencia>3509502</MunicipioIncidencia>
-                    </Servico>
-                    <Rps>
-                      <Status>1</Status>
-                      <DataEmissao>2025-03-24</DataEmissao>
-                      <IdentificacaoRps>
-                        <Numero>25032423</Numero>
-                        <Tipo>1</Tipo>
-                        <Serie>NF</Serie>
-                      </IdentificacaoRps>
-                    </Rps>
-                    <Tomador>
-                      <RazaoSocial>SOCIEDADE CAMPINEIRA DE EDUCACAO E INSTRUCAO</RazaoSocial>
-                      <Contato>
-                        <Email>hmcheu@gmail.com</Email>
-                      </Contato>
-                      <IdentificacaoTomador>
-                        <CpfCnpj>
-                          <Cnpj>46020301000269</Cnpj>
-                        </CpfCnpj>
-                      </IdentificacaoTomador>
-                      <Endereco>
-                        <Numero>S/N</Numero>
-                        <Uf>SP</Uf>
-                        <CodigoMunicipio>3550308</CodigoMunicipio>
-                        <Complemento/>
-                        <Bairro>JARDIM LONDRES</Bairro>
-                        <Endereco>AV JOHN BOYD DUNLOP</Endereco>
-                        <Cep>13060803</Cep>
-                      </Endereco>
-                    </Tomador>
-                    <OptanteSimplesNacional>2</OptanteSimplesNacional>
-                    <IncentivoFiscal>2</IncentivoFiscal>
-                  </InfDeclaracaoPrestacaoServico>
-                </Rps>
-              </ListaRps>
-              <QuantidadeRps>2</QuantidadeRps>
-            </LoteRps>
-          </EnviarLoteRpsSincronoEnvio>
-        </tns:RecepcionarLoteRpsSincrono>
-      </soap:Body>
-    </soap:Envelope>`;
-
-    // Chama o método getSignedXml
-    const signedXml = nfse['getSignedXml'](
-      xmlInput,
+    // @ts-ignore - Acessando método protegido para teste
+    const signedXml = nfse.getSignedXml(
+      '<?xml version="1.0"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="http://nfse.abrasf.org.br"><soap:Body><tns:RecepcionarLoteRps><EnviarLoteRpsEnvio><LoteRps><CpfCnpj><Cnpj>12345678000199</Cnpj></CpfCnpj><InscricaoMunicipal>123456</InscricaoMunicipal><NumeroLote>1</NumeroLote><ListaRps><Rps><InfDeclaracaoPrestacaoServico><Competencia>2025-03-24</Competencia><Prestador><CpfCnpj><Cnpj>12345678000199</Cnpj></CpfCnpj><InscricaoMunicipal>123456</InscricaoMunicipal></Prestador><Servico><CodigoCnae>620310002</CodigoCnae><Discriminacao>teste 1</Discriminacao><Valores><ValorServicos>100</ValorServicos><ValorIss>2</ValorIss></Valores></Servico><Rps><Status>1</Status><DataEmissao>2025-03-24</DataEmissao><IdentificacaoRps><Numero>1</Numero><Serie>NF</Serie><Tipo>1</Tipo></IdentificacaoRps></Rps><Tomador><RazaoSocial>Teste 1</RazaoSocial><IdentificacaoTomador><CpfCnpj><Cnpj>98765432000199</Cnpj></CpfCnpj></IdentificacaoTomador></Tomador></InfDeclaracaoPrestacaoServico></Rps><Rps><InfDeclaracaoPrestacaoServico><Competencia>2025-03-24</Competencia><Prestador><CpfCnpj><Cnpj>12345678000199</Cnpj></CpfCnpj><InscricaoMunicipal>123456</InscricaoMunicipal></Prestador><Servico><CodigoCnae>620310002</CodigoCnae><Discriminacao>teste 2</Discriminacao><Valores><ValorServicos>200</ValorServicos><ValorIss>4</ValorIss></Valores></Servico><Rps><Status>1</Status><DataEmissao>2025-03-24</DataEmissao><IdentificacaoRps><Numero>2</Numero><Serie>NF</Serie><Tipo>1</Tipo></IdentificacaoRps></Rps><Tomador><RazaoSocial>Teste 2</RazaoSocial><IdentificacaoTomador><CpfCnpj><Cnpj>98765432000199</Cnpj></CpfCnpj></IdentificacaoTomador></Tomador></InfDeclaracaoPrestacaoServico></Rps></ListaRps><QuantidadeRps>2</QuantidadeRps></LoteRps></EnviarLoteRpsEnvio></tns:RecepcionarLoteRps></soap:Body></soap:Envelope>',
       {
         location: {
-          reference: "//*[local-name(.)='InfDeclaracaoPrestacaoServico']",
-          action: "after"
-        }
+          reference: `//*[local-name(.)='InfDeclaracaoPrestacaoServico']`,
+          action: 'after',
+        },
       },
       {
-        xpath: "//*[local-name(.)='InfDeclaracaoPrestacaoServico']"
+        xpath: `//*[local-name(.)='InfDeclaracaoPrestacaoServico']`,
       },
-      mockPemCert
+      mockPemCert,
     );
 
-    // Filtra apenas as instâncias que foram usadas para assinar os RPS
-    const rpsSigningInstances = mockSignedXmlInstances.filter(instance => 
-      instance.xmlToSign.includes('InfDeclaracaoPrestacaoServico')
-    );
-
-    // Verifica se foram criadas exatamente 2 instâncias para assinar os RPS
-    expect(rpsSigningInstances.length).toBe(2);
-
-    // Verifica se o XML assinado contém os elementos corretos
+    // Verifica se o XML final mantém a estrutura correta
     expect(signedXml).toContain('<soap:Envelope');
-    expect(signedXml).toContain('<soap:Body');
-    expect(signedXml).toContain('<tns:RecepcionarLoteRpsSincrono>');
-    expect(signedXml).toContain('<EnviarLoteRpsSincronoEnvio>');
+    expect(signedXml).toContain('<soap:Body>');
+    expect(signedXml).toContain('<tns:RecepcionarLoteRps>');
+    expect(signedXml).toContain('<EnviarLoteRpsEnvio>');
+    expect(signedXml).toContain('<LoteRps>');
     expect(signedXml).toContain('<ListaRps>');
-    expect(signedXml).toContain('<Rps>');
 
     // Verifica se cada RPS tem sua própria assinatura usando regex
     const rpsMatches = signedXml.match(/<Rps>[\s\S]*?<\/Rps>/g) || [];
@@ -264,17 +112,30 @@ describe('NfseCampinas - Assinatura de Múltiplos RPS', () => {
     expect(idMatches.length).toBe(2);
 
     // Verifica se cada RPS tem uma assinatura com a referência correta
-    rpsSigningInstances.forEach((instance, index) => {
-      const rpsXml = rpsMatches[index];
-      const signatureXml = signatureMatches[index];
-      
+    rpsMatches.forEach((rpsXml, index) => {
       expect(rpsXml).toContain(`Id="_${index}"`);
-      expect(signatureXml).toContain(`URI="#_${index}"`);
+      expect(signatureMatches[index]).toContain(`URI="#_${index}"`);
     });
 
     // Verifica se computeSignature foi chamado uma vez para cada RPS
-    rpsSigningInstances.forEach((instance) => {
-      expect(instance.computeSignature).toHaveBeenCalledTimes(1);
+    expect(mockSignedXmlInstances.length).toBe(2);
+    mockSignedXmlInstances.forEach((instance) => {
+      expect(instance.xmlToSign).toContain('InfDeclaracaoPrestacaoServico');
+    });
+
+    // Verifica se os IDs foram adicionados corretamente
+    const parser = new XMLParser({
+      ignoreDeclaration: true,
+      ignoreAttributes: false,
+      attributeNamePrefix: '@',
+    });
+    const parsedXml = parser.parse(signedXml);
+    const rpsList = parsedXml['soap:Envelope']['soap:Body']['tns:RecepcionarLoteRps'].EnviarLoteRpsEnvio.LoteRps.ListaRps.Rps;
+    
+    rpsList.forEach((rps: any, index: number) => {
+      expect(rps.InfDeclaracaoPrestacaoServico['@Id']).toBe(`_${index}`);
+      expect(rps.InfDeclaracaoPrestacaoServico.Signature).toBeDefined();
+      expect(rps.InfDeclaracaoPrestacaoServico.Signature.SignedInfo.Reference['@URI']).toBe(`#_${index}`);
     });
   });
 }); 
