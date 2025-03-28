@@ -1,5 +1,8 @@
+import { XMLParser } from 'fast-xml-parser';
 import pem from 'pem';
 import { SignedXml } from 'xml-crypto';
+import { ComputeSignatureOptions } from 'xml-crypto/lib/types';
+import xmlbuilder from 'xmlbuilder';
 import {
   createClientAsync,
   NotaFiscalSoapClient,
@@ -15,9 +18,6 @@ import {
   TnsSubstituirNfse,
 } from '../soap/notafiscalsoap';
 import { ImprimirNfseRequest, ReferenceOptions } from '../types/nfseCampinas';
-import { ComputeSignatureOptions } from 'xml-crypto/lib/types';
-import { XMLParser } from 'fast-xml-parser';
-import xmlbuilder from 'xmlbuilder';
 
 export class NfseCampinas {
   readonly defaultOptions: ReferenceOptions = {
@@ -388,21 +388,63 @@ export class NfseCampinas {
     const parsedXml = parser.parse(xml);
     const messageJsObject = parsedXml['soap:Envelope']['soap:Body'];
 
+    // Verifica se é uma lista de RPS
+    const isListaRps = messageJsObject['EnviarLoteRpsEnvio']?.LoteRps?.Rps;
+    const isListaRpsSincrono = messageJsObject['EnviarLoteRpsSincronoEnvio']?.LoteRps?.Rps;
+
+    if (isListaRps || isListaRpsSincrono) {
+      // Se for uma lista de RPS, assina cada elemento individualmente
+      const rpsList = isListaRps ? messageJsObject['EnviarLoteRpsEnvio'].LoteRps.Rps : 
+                               messageJsObject['EnviarLoteRpsSincronoEnvio'].LoteRps.Rps;
+      
+      // Garante que rpsList seja sempre um array
+      const rpsArray = Array.isArray(rpsList) ? rpsList : [rpsList];
+
+      // Assina cada RPS individualmente
+      rpsArray.forEach((rps, index) => {
+        const rpsXml = xmlbuilder.create(rps, { headless: true }).end();
+        sig.computeSignature(rpsXml, {
+          ...computeOptions,
+          location: {
+            reference: `//*[local-name(.)='InfDeclaracaoPrestacaoServico']`,
+            action: 'after',
+          },
+        });
+        const signedRps = sig.getSignedXml();
+        
+        // Atualiza o RPS original com a versão assinada
+        if (isListaRps) {
+          messageJsObject['EnviarLoteRpsEnvio'].LoteRps.Rps[index] = parser.parse(signedRps);
+        } else {
+          messageJsObject['EnviarLoteRpsSincronoEnvio'].LoteRps.Rps[index] = parser.parse(signedRps);
+        }
+      });
+    } else {
+      // Para outros casos, mantém o comportamento original
+      const bodyXml = xmlbuilder.create(messageJsObject, { headless: true });
+      const xmlConverted = bodyXml.end();
+      sig.computeSignature(xmlConverted, computeOptions);
+      const signedXml = sig.getSignedXml();
+
+      /**
+       * Após assinado, precisamos reconstruir o XML original inserindo a parte da assinatura
+       * Os namespaces e atributos serão preservados
+       */
+      parsedXml['soap:Envelope']['soap:Body'] = '';
+      const bodyEnvelope = xmlbuilder.create(parsedXml);
+
+      const bodyEnvelopeString = bodyEnvelope.end({ pretty: false });
+      return bodyEnvelopeString.replace('<soap:Body/>', `<soap:Body>${signedXml}</soap:Body>`);
+    }
+
+    // Reconstruir o XML final
     const bodyXml = xmlbuilder.create(messageJsObject, { headless: true });
     const xmlConverted = bodyXml.end();
 
-    sig.computeSignature(xmlConverted, computeOptions);
-    const signedXml = sig.getSignedXml();
-
-    /**
-     * Após assinado, precisamos reconstruir o XML original inserindo a parte da assinatura
-     * Os namespaces e atributos serão preservados
-     */
     parsedXml['soap:Envelope']['soap:Body'] = '';
     const bodyEnvelope = xmlbuilder.create(parsedXml);
-
     const bodyEnvelopeString = bodyEnvelope.end({ pretty: false });
-    return bodyEnvelopeString.replace('<soap:Body/>', `<soap:Body>${signedXml}</soap:Body>`);
+    return bodyEnvelopeString.replace('<soap:Body/>', `<soap:Body>${xmlConverted}</soap:Body>`);
   }
 
   private logLastRequestResponse(client: NotaFiscalSoapClient) {
