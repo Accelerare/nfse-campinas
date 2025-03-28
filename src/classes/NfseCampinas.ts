@@ -29,13 +29,17 @@ export class NfseCampinas {
     uri: 'rps@1',
   };
   private soapClient: NotaFiscalSoapClient;
+  private readonly version = '2.2.1'; // Versão com correção de assinatura múltipla
 
   constructor(
     protected host: string,
     protected certificate: Buffer,
     protected certPassword: string,
     protected debug: boolean = false,
-  ) {}
+  ) {
+    console.log(`[NFSe Campinas] Inicializando versão ${this.version}`);
+    console.log(`[NFSe Campinas] Modo debug: ${debug}`);
+  }
 
   public async ConsultarNfsePorRps(input: TnsConsultarNfsePorRps) {
     const [client, pemCert] = await Promise.all([this.getSoapClient(), this.getPemCert()]);
@@ -356,6 +360,8 @@ export class NfseCampinas {
     referenceOptions: ReferenceOptions,
     pemCert: pem.Pkcs12ReadResult,
   ) {
+    console.log(`[NFSe Campinas ${this.version}] Iniciando assinatura XML`);
+    
     const sig = new SignedXml({
       privateKey: pemCert.key,
       publicCert: pemCert.cert,
@@ -370,10 +376,6 @@ export class NfseCampinas {
     sig.canonicalizationAlgorithm = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
     sig.signatureAlgorithm = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
 
-    /**
-     * Aqui é necessário extrair somente o XML do conteúdo dentro do body para efetuar a assinatura
-     * (por um motivo desconhecido). Mas funciona dessa forma!
-     */
     const parser = new XMLParser({
       ignoreDeclaration: true,
       ignoreAttributes: false,
@@ -389,50 +391,64 @@ export class NfseCampinas {
     const messageJsObject = parsedXml['soap:Envelope']['soap:Body'];
 
     // Verifica se é uma lista de RPS
-    const isListaRps = messageJsObject['EnviarLoteRpsEnvio']?.LoteRps?.Rps;
-    const isListaRpsSincrono = messageJsObject['EnviarLoteRpsSincronoEnvio']?.LoteRps?.Rps;
+    const isListaRps = messageJsObject['EnviarLoteRpsEnvio']?.LoteRps?.ListaRps?.Rps;
+    const isListaRpsSincrono = messageJsObject['EnviarLoteRpsSincronoEnvio']?.LoteRps?.ListaRps?.Rps;
 
     if (isListaRps || isListaRpsSincrono) {
+      console.log(`[NFSe Campinas ${this.version}] Detectada lista de RPS`);
+      
       // Se for uma lista de RPS, assina cada elemento individualmente
-      const rpsList = isListaRps ? messageJsObject['EnviarLoteRpsEnvio'].LoteRps.Rps : 
-                               messageJsObject['EnviarLoteRpsSincronoEnvio'].LoteRps.Rps;
+      const rpsList = isListaRps ? messageJsObject['EnviarLoteRpsEnvio'].LoteRps.ListaRps.Rps : 
+                               messageJsObject['EnviarLoteRpsSincronoEnvio'].LoteRps.ListaRps.Rps;
       
       // Garante que rpsList seja sempre um array
       const rpsArray = Array.isArray(rpsList) ? rpsList : [rpsList];
+      
+      console.log(`[NFSe Campinas ${this.version}] Quantidade de RPS na lista: ${rpsArray.length}`);
 
       // Assina cada RPS individualmente
       rpsArray.forEach((rps, index) => {
-        const rpsXml = xmlbuilder.create(rps, { headless: true }).end();
-        sig.computeSignature(rpsXml, {
-          ...computeOptions,
-          location: {
-            reference: `//*[local-name(.)='InfDeclaracaoPrestacaoServico']`,
-            action: 'after',
-          },
+        console.log(`[NFSe Campinas ${this.version}] Assinando RPS ${index + 1} de ${rpsArray.length}`);
+        
+        // Cria uma nova instância de SignedXml para cada RPS
+        const rpsSig = new SignedXml({
+          privateKey: pemCert.key,
+          publicCert: pemCert.cert,
+          implicitTransforms: ['http://www.w3.org/TR/2001/REC-xml-c14n-20010315'],
         });
-        const signedRps = sig.getSignedXml();
+
+        rpsSig.addReference({
+          ...this.defaultOptions,
+          xpath: `//*[local-name(.)='InfDeclaracaoPrestacaoServico']`,
+        });
+
+        rpsSig.canonicalizationAlgorithm = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
+        rpsSig.signatureAlgorithm = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
+
+        // Assina o RPS
+        const rpsXml = xmlbuilder.create(rps, { headless: true }).end();
+        rpsSig.computeSignature(rpsXml);
+        const signedRps = rpsSig.getSignedXml();
         
         // Atualiza o RPS original com a versão assinada
         if (isListaRps) {
-          messageJsObject['EnviarLoteRpsEnvio'].LoteRps.Rps[index] = parser.parse(signedRps);
+          messageJsObject['EnviarLoteRpsEnvio'].LoteRps.ListaRps.Rps[index] = parser.parse(signedRps);
         } else {
-          messageJsObject['EnviarLoteRpsSincronoEnvio'].LoteRps.Rps[index] = parser.parse(signedRps);
+          messageJsObject['EnviarLoteRpsSincronoEnvio'].LoteRps.ListaRps.Rps[index] = parser.parse(signedRps);
         }
+        
+        console.log(`[NFSe Campinas ${this.version}] RPS ${index + 1} assinado com sucesso`);
       });
     } else {
+      console.log(`[NFSe Campinas ${this.version}] Assinando XML único`);
       // Para outros casos, mantém o comportamento original
       const bodyXml = xmlbuilder.create(messageJsObject, { headless: true });
       const xmlConverted = bodyXml.end();
       sig.computeSignature(xmlConverted, computeOptions);
       const signedXml = sig.getSignedXml();
 
-      /**
-       * Após assinado, precisamos reconstruir o XML original inserindo a parte da assinatura
-       * Os namespaces e atributos serão preservados
-       */
       parsedXml['soap:Envelope']['soap:Body'] = '';
       const bodyEnvelope = xmlbuilder.create(parsedXml);
-
       const bodyEnvelopeString = bodyEnvelope.end({ pretty: false });
       return bodyEnvelopeString.replace('<soap:Body/>', `<soap:Body>${signedXml}</soap:Body>`);
     }
@@ -444,6 +460,8 @@ export class NfseCampinas {
     parsedXml['soap:Envelope']['soap:Body'] = '';
     const bodyEnvelope = xmlbuilder.create(parsedXml);
     const bodyEnvelopeString = bodyEnvelope.end({ pretty: false });
+    
+    console.log(`[NFSe Campinas ${this.version}] Assinatura XML concluída com sucesso`);
     return bodyEnvelopeString.replace('<soap:Body/>', `<soap:Body>${xmlConverted}</soap:Body>`);
   }
 
