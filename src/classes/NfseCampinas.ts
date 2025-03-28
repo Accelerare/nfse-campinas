@@ -439,6 +439,17 @@ export class NfseCampinas {
         
         console.log(`[NFSe Campinas ${this.version}] RPS ${index + 1} assinado com sucesso`);
       });
+
+      // Reconstruir o XML final
+      const bodyXml = xmlbuilder.create(messageJsObject, { headless: true });
+      const xmlConverted = bodyXml.end();
+
+      parsedXml['soap:Envelope']['soap:Body'] = '';
+      const bodyEnvelope = xmlbuilder.create(parsedXml);
+      const bodyEnvelopeString = bodyEnvelope.end({ pretty: false });
+      
+      console.log(`[NFSe Campinas ${this.version}] Assinatura XML concluída com sucesso`);
+      return bodyEnvelopeString.replace('<soap:Body/>', `<soap:Body>${xmlConverted}</soap:Body>`);
     } else {
       console.log(`[NFSe Campinas ${this.version}] Assinando XML único`);
       // Para outros casos, mantém o comportamento original
@@ -452,17 +463,6 @@ export class NfseCampinas {
       const bodyEnvelopeString = bodyEnvelope.end({ pretty: false });
       return bodyEnvelopeString.replace('<soap:Body/>', `<soap:Body>${signedXml}</soap:Body>`);
     }
-
-    // Reconstruir o XML final
-    const bodyXml = xmlbuilder.create(messageJsObject, { headless: true });
-    const xmlConverted = bodyXml.end();
-
-    parsedXml['soap:Envelope']['soap:Body'] = '';
-    const bodyEnvelope = xmlbuilder.create(parsedXml);
-    const bodyEnvelopeString = bodyEnvelope.end({ pretty: false });
-    
-    console.log(`[NFSe Campinas ${this.version}] Assinatura XML concluída com sucesso`);
-    return bodyEnvelopeString.replace('<soap:Body/>', `<soap:Body>${xmlConverted}</soap:Body>`);
   }
 
   private logLastRequestResponse(client: NotaFiscalSoapClient) {
